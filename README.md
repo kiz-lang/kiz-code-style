@@ -2,6 +2,7 @@
 
 ## 1. 头文件
 - 使用 `#pragma once` 作为头文件保护，不使用 `#ifndef` 宏保护。
+- 头文件的包含顺序按先放本模块，再放第三方
 
 ## 2. 缩进与格式
 - 命名空间 `ks` 内部**不缩进**。
@@ -11,9 +12,13 @@
 
 ## 3. 命名空间与模块
 - **不允许使用 `inline namespace`**，会降低代码可读性与结构清晰度。
+- **不允许在头文件使用`using namespace`**会降低代码可读性与结构清晰度。
+- 建议一个文件一个类，类名和文件名相同
+- 文件/文件夹名使用小写下划线命名法。
+- 建议将实现细节放入内部命名空间（如detail）。
 
 ## 4. 函数写法
-- 除 `void` 外，统一使用**后置返回类型**：
+- 建议统一使用**后置返回类型**：
 ```cpp
 auto func() -> int;
 ```
@@ -21,6 +26,7 @@ auto func() -> int;
 ```cpp
 void func();
 ```
+- - 鼓励对短小函数使用inline，移动构造/赋值应标记noexcept以提高性能。
 
 ## 5. 命名规则
 - 变量、函数：小写 + 下划线 `snake_case`
@@ -29,6 +35,7 @@ void func();
 
 ## 6. 变量与类型
 - 优先使用 `auto` 推导变量类型，不使用冗余的 `auto*`。
+- 使用`int* name` `int& name`而不是`int *name` `int &name`
 - 固定大小数组**优先使用 C 风格数组**，不建议使用 `std::array`。
 - 尽量不使用全局变量。
 - **优先使用定长/明确大小类型**：
@@ -42,6 +49,7 @@ void func();
   3. 构造函数 / 析构函数
   4. 公开接口
   5. 私有方法
+- 强制要求初始化列表按声明顺序，建议对单参数构造函数使用explicit。
 - **不推荐使用虚函数**，优先使用静态派发。
 
 ## 8. 内存与所有权
@@ -71,197 +79,6 @@ void func();
   只写**作用 + 副作用 + 关键前提**，不写冗余长文本。
 - 不使用冗长 `/**/` 块注释。
 
-```cpp
-/// 把 x 加到内部计数器，无溢出检查
-auto add_count(uint32_t x) -> uint32_t;
-```
-
----
-
-# 附录 A：完整示例代码（严格遵循本规范）
-
-## example.h
-```cpp
-#pragma once
-
-#include <cstddef>
-#include <cstdint>
-#include <memory>
-#include <cassert>
-
-namespace ks {
-
-/// 操作结果：成功/错误码
-struct Result {
-    bool ok;
-    int  code;
-
-    static auto make_ok() -> Result;
-    static auto make_err(int code) -> Result;
-};
-
-/// 错误类型枚举
-enum class ErrorCode : int32_t {
-    None      = 0,
-    BadOffset = 1,
-    NoMemory  = 2,
-};
-
-/// 固定容量字节缓冲区
-class Buffer {
-    // 1. 私有字段
-    std::byte* data_;
-    size_t     size_;
-    size_t     capacity_;
-
-    // 2. 构造 / 析构
-public:
-    Buffer();
-    explicit Buffer(size_t init_capacity);
-    ~Buffer();
-
-    Buffer(const Buffer&)            = delete;
-    auto operator=(const Buffer&) -> Buffer& = delete;
-
-    Buffer(Buffer&& other) noexcept;
-    auto operator=(Buffer&& other) noexcept -> Buffer&;
-
-    // 3. 公开接口
-    /// 写入数据到 offset，不扩容；越界返回错误
-    auto write(size_t offset, const std::byte* src, size_t len) -> Result;
-
-    /// 调整逻辑大小，必要时重分配
-    auto resize(size_t new_size) -> Result;
-
-    /// 获取底层数据指针
-    auto data() const -> const std::byte*;
-
-    /// 有效字节数
-    auto size() const -> size_t;
-
-    // 4. 私有方法
-private:
-    auto reallocate(size_t new_capacity) -> bool;
-};
-
-/// 两数相加（纯函数）
-auto add(uint32_t a, uint32_t b) -> uint32_t;
-
-/// 打印欢迎信息
-void print_hello();
-
-} // namespace ks
-```
-
-## example.cpp
-```cpp
-#include "example.h"
-#include <cstdlib>
-#include <cstring>
-#include <iostream>
-
-namespace ks {
-
-// Result
-auto Result::make_ok() -> Result {
-    return {true, 0};
-}
-
-auto Result::make_err(int code) -> Result {
-    return {false, code};
-}
-
-// Buffer
-Buffer::Buffer()
-    : data_(nullptr), size_(0), capacity_(0) {}
-
-Buffer::Buffer(size_t init_capacity)
-    : data_(nullptr), size_(0), capacity_(init_capacity) {
-    if (capacity_ > 0) {
-        data_ = static_cast<std::byte*>(std::malloc(capacity_));
-    }
-}
-
-Buffer::~Buffer() {
-    if (data_) {
-        std::free(data_);
-    }
-}
-
-Buffer::Buffer(Buffer&& other) noexcept
-    : data_(other.data_),
-      size_(other.size_),
-      capacity_(other.capacity_) {
-    other.data_     = nullptr;
-    other.size_     = 0;
-    other.capacity_ = 0;
-}
-
-auto Buffer::operator=(Buffer&& other) noexcept -> Buffer& {
-    if (this == &other) {
-        return *this;
-    }
-    if (data_) {
-        std::free(data_);
-    }
-    data_     = other.data_;
-    size_     = other.size_;
-    capacity_ = other.capacity_;
-
-    other.data_     = nullptr;
-    other.size_     = 0;
-    other.capacity_ = 0;
-    return *this;
-}
-
-auto Buffer::write(size_t offset, const std::byte* src, size_t len) -> Result {
-    if (offset + len > size_) {
-        return Result::make_err(static_cast<int>(ErrorCode::BadOffset));
-    }
-    // 断言保证内部合法性，不使用 .at()
-    assert(data_ != nullptr);
-    std::memcpy(data_ + offset, src, len);
-    return Result::make_ok();
-}
-
-auto Buffer::resize(size_t new_size) -> Result {
-    if (new_size > capacity_ && !reallocate(new_size)) {
-        return Result::make_err(static_cast<int>(ErrorCode::NoMemory));
-    }
-    size_ = new_size;
-    return Result::make_ok();
-}
-
-auto Buffer::data() const -> const std::byte* {
-    return data_;
-}
-
-auto Buffer::size() const -> size_t {
-    return size_;
-}
-
-auto Buffer::reallocate(size_t new_capacity) -> bool {
-    auto new_data = static_cast<std::byte*>(std::malloc(new_capacity));
-    if (!new_data) {
-        return false;
-    }
-    if (data_) {
-        std::memcpy(new_data, data_, size_);
-        std::free(data_);
-    }
-    data_     = new_data;
-    capacity_ = new_capacity;
-    return true;
-}
-
-// free function
-auto add(uint32_t a, uint32_t b) -> uint32_t {
-    return a + b;
-}
-
-void print_hello() {
-    std::cout << "hello from ks\n";
-}
-
-} // namespace ks
-```
+## 13. 平台与编译器差异
+- 尽量不使用编译器提供的扩展语法，以适配不同编译器。
+- 使用明确的宏命名风格（如OS_WIN），建议将平台差异封装在独立文件中。
